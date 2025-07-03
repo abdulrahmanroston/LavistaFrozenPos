@@ -2453,7 +2453,7 @@ color-adjust: exact !important;
         ...additionalFees.filter(fee => parseFloat(fee.amount) > 0).map(fee => `*${fee.name}:* ${parseFloat(fee.amount).toFixed(2)} ${currency}`)
     ].join('\n');
     const total = subtotal + deliveryFee + feeTotal - couponDiscount;
-    const products = orderItems.map(item => `${item.name} x${item.quantity} - ${(parseFloat(item.price) || 0).toFixed(2)} ${currency}`).join('\n');
+    const products = orderItems.map(item => `${item.name} x${item.quantity} - ${(parseFloat(item.price) || 0).toFixed(2)} ${currency}`).join('\n\n');
     const formattedDate = selectedDate ? selectedDate.replace(/-/g, '/') : 'Not specified';
     const discountLines = [];
     if (couponDiscount > 0 && couponCode) {
@@ -2461,9 +2461,9 @@ color-adjust: exact !important;
     }
     const discountTextCombined = discountLines.join('\n');
     const message = `*Hello ${customerName},*\n\n` +
-        `We’re happy to inform you that your order is ready and will be delivered on ${formattedDate} at ${selectedTime || 'Not specified'}.\n\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
         `*Order Summary:*\n\n` +
+        `` +
         `${products}\n\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
         `*Subtotal:* ${subtotal.toFixed(2)} ${currency}\n\n` +
