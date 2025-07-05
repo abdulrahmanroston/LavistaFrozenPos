@@ -2024,6 +2024,26 @@ function renderCoupons() {
                 showLoader(false);
             }
         }
+        
+        
+    function getWarehousePrice(productId, warehouse) {
+    const product = products.find(p => p.id === productId);
+    if (product) {
+        const warehousePriceKey = `_price_${warehouse.toLowerCase()}`;
+        const warehousePrice = getMetaValue(product.meta_data, warehousePriceKey);
+        if (warehousePrice && !isNaN(parseFloat(warehousePrice)) && parseFloat(warehousePrice) > 0) {
+            console.log(`Warehouse price for product ${productId} (${warehouse}): ${warehousePrice}`);
+            return parseFloat(warehousePrice).toFixed(2);
+        }
+        const regularPrice = parseFloat(product.price || product.regular_price || 0);
+        console.warn(`No valid warehouse price for product ${productId} (${warehouse}). Using regular price: ${regularPrice}`);
+        return regularPrice.toFixed(2);
+    }
+    const orderItem = orderItems.find(item => item.product_id === productId);
+    const fallbackPrice = orderItem ? parseFloat(orderItem.price || 0).toFixed(2) : '0.00';
+    console.warn(`Product ${productId} not found in cache. Using fallback price: ${fallbackPrice}`);
+    return fallbackPrice;
+}
 
         async function createOrder() {
     if (!selectedWarehouse) {
@@ -2080,7 +2100,9 @@ function renderCoupons() {
     }
     const paymentMethodId = selectedPaymentMethod.value;
     const paymentMethod = paymentMethods.find(m => m.id === paymentMethodId);
-    for (const item of orderItems) {
+    
+    // Validate stock and fetch warehouse-specific prices
+    const lineItems = orderItems.map(item => {
         const product = products.find(p => p.id === item.product_id);
         const currentStock = parseInt(getMetaValue(product.meta_data, `_stock_${selectedWarehouse}`)) || 0;
         if (item.quantity > currentStock) {
@@ -2093,45 +2115,31 @@ function renderCoupons() {
                 showConfirmButton: false,
                 timer: 3000
             });
-            return;
+            throw new Error(`Insufficient stock for ${item.name}`);
         }
+        const warehousePrice = getWarehousePrice(item.product_id, selectedWarehouse);
+        return {
+            product_id: item.product_id,
+            quantity: item.quantity,
+            price: parseFloat(warehousePrice),
+            subtotal: (parseFloat(warehousePrice) * item.quantity).toFixed(2),
+            total: (parseFloat(warehousePrice) * item.quantity).toFixed(2),
+            meta_data: [
+                { key: '_warehouse', value: item.warehouse || selectedWarehouse },
+                { key: '_warehouse_price', value: parseFloat(warehousePrice).toFixed(2) },
+                { key: '_cashier_person', value: cashierName },
+                { key: '_reduced_stock', value: item.quantity.toString() }
+            ]
+        };
+    });
+    
+    if (!lineItems.every(item => item)) {
+        return;
     }
-    if (selectedCoupon) {
-        const currentDate = new Date();
-        const expiryDate = selectedCoupon.date_expires ? new Date(selectedCoupon.date_expires) : null;
-        if (expiryDate && expiryDate < currentDate) {
-            Swal.fire({
-                icon: 'error',
-                title: 'Invalid Coupon',
-                text: `Coupon ${selectedCoupon.code} has expired.`,
-                toast: true,
-                position: 'top-end',
-                showConfirmButton: false,
-                timer: 3000
-            });
-            selectedCoupon = null;
-            updateOrderSummary();
-            return;
-        }
-        if (selectedCoupon.maximum_uses > 0 && selectedCoupon.usage_count >= selectedCoupon.maximum_uses) {
-            Swal.fire({
-                icon: 'error',
-                title: 'Invalid Coupon',
-                text: `Coupon ${selectedCoupon.code} has reached its usage limit.`,
-                toast: true,
-                position: 'top-end',
-                showConfirmButton: false,
-                timer: 3000
-            });
-            selectedCoupon = null;
-            updateOrderSummary();
-            return;
-        }
-    }
-
+    
     const customerName = document.getElementById('customer_name').value;
     const email = document.getElementById('email').value;
-    const subtotal = orderItems.reduce((sum, item) => sum + (item.quantity * (parseFloat(item.price) || 0)), 0);
+    const subtotal = lineItems.reduce((sum, item) => sum + parseFloat(item.subtotal), 0);
     let couponDiscount = 0;
     if (selectedCoupon && selectedCoupon.amount && selectedCoupon.discount_type) {
         const couponAmount = parseFloat(selectedCoupon.amount) || 0;
@@ -2141,7 +2149,7 @@ function renderCoupons() {
             couponDiscount = Math.min((subtotal * couponAmount) / 100, subtotal);
         }
     }
-
+    
     const orderData = {
         customer_id: selectedCustomer || 0,
         status: 'completed',
@@ -2158,16 +2166,7 @@ function renderCoupons() {
             address_1: document.getElementById('address_1').value,
             phone: document.getElementById('phone').value
         },
-        line_items: orderItems.map(item => ({
-            product_id: item.product_id,
-            quantity: item.quantity,
-            price: parseFloat(item.price).toFixed(2),
-            meta_data: [
-                { key: '_warehouse', value: item.warehouse || selectedWarehouse },
-                { key: '_cashier_person', value: cashierName },
-                { key: '_reduced_stock', value: item.quantity.toString() }
-            ]
-        })),
+        line_items: lineItems,
         fee_lines: [
             {
                 name: 'Delivery Fee',
@@ -2194,9 +2193,10 @@ function renderCoupons() {
             { key: 'note', value: document.getElementById('order_note').value }
         ]
     };
-
+    
     showLoader(true);
     try {
+        console.log('Creating order with data:', JSON.stringify(orderData, null, 2));
         const orderResponse = await fetch(`${apiUrl}/orders`, {
             method: 'POST',
             headers: {
@@ -2205,13 +2205,13 @@ function renderCoupons() {
             },
             body: JSON.stringify(orderData)
         });
-
+        
         const responseBody = await orderResponse.json();
         if (!orderResponse.ok) {
             throw new Error(responseBody.message || 'Failed to create order');
         }
         const order = responseBody;
-
+        
         if (isShiftOpen) {
             const orderSummary = {
                 id: order.id,
@@ -2228,15 +2228,31 @@ function renderCoupons() {
             }));
             updateShiftInfo();
         }
-
+        
         lastOrder = { ...orderData, id: order.id };
         for (const item of orderItems) {
             await updateProductStock(item.product_id, item.quantity);
+            // تحديث الكميات في مصفوفة products محليًا
+            const product = products.find(p => p.id === item.product_id);
+            if (product) {
+                const stockKey = `_stock_${selectedWarehouse}`;
+                const currentStock = parseInt(getMetaValue(product.meta_data, stockKey)) || 0;
+                const newStock = currentStock - item.quantity;
+                const metaIndex = product.meta_data.findIndex(m => m.key === stockKey);
+                if (metaIndex >= 0) {
+                    product.meta_data[metaIndex].value = newStock.toString();
+                } else {
+                    product.meta_data.push({ key: stockKey, value: newStock.toString() });
+                }
+                console.log(`Updated local stock for product ${item.product_id} (${selectedWarehouse}): ${newStock}`);
+            }
         }
-
+        
+        // إعادة تحميل المنتجات لتحديث الكميات في واجهة المستخدم
+        await fetchProducts(selectedWarehouse);
         // إعادة تحميل الكوبونات لتحديث حدود الاستخدام
         await fetchCoupons();
-
+        
         Swal.fire({
             icon: 'success',
             title: 'Order Created',
@@ -2260,6 +2276,7 @@ function renderCoupons() {
             lockCoupons();
         });
     } catch (error) {
+        console.error('Error creating order:', error);
         Swal.fire({
             icon: 'error',
             title: 'Error',
