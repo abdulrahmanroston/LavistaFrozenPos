@@ -2103,35 +2103,36 @@ function renderCoupons() {
     
     // Validate stock and fetch warehouse-specific prices
     const lineItems = orderItems.map(item => {
-        const product = products.find(p => p.id === item.product_id);
-        const currentStock = parseInt(getMetaValue(product.meta_data, `_stock_${selectedWarehouse}`)) || 0;
-        if (item.quantity > currentStock) {
-            Swal.fire({
-                icon: 'error',
-                title: 'Insufficient Stock',
-                text: `Only ${currentStock} units available for ${item.name}.`,
-                toast: true,
-                position: 'top-end',
-                showConfirmButton: false,
-                timer: 3000
-            });
-            throw new Error(`Insufficient stock for ${item.name}`);
-        }
-        const warehousePrice = getWarehousePrice(item.product_id, selectedWarehouse);
-        return {
-            product_id: item.product_id,
-            quantity: item.quantity,
-            price: parseFloat(warehousePrice),
-            subtotal: (parseFloat(warehousePrice) * item.quantity).toFixed(2),
-            total: (parseFloat(warehousePrice) * item.quantity).toFixed(2),
-            meta_data: [
-                { key: '_warehouse', value: item.warehouse || selectedWarehouse },
-                { key: '_warehouse_price', value: parseFloat(warehousePrice).toFixed(2) },
-                { key: '_cashier_person', value: cashierName },
-                { key: '_reduced_stock', value: item.quantity.toString() }
-            ]
-        };
-    });
+    const product = products.find(p => p.id === item.product_id);
+    const currentStock = parseInt(getMetaValue(product.meta_data, `_stock_${selectedWarehouse}`)) || 0;
+    if (item.quantity > currentStock) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Insufficient Stock',
+            text: `Only ${currentStock} units available for ${item.name}.`,
+            toast: true,
+            position: 'top-end',
+            showConfirmButton: false,
+            timer: 3000
+        });
+        throw new Error(`Insufficient stock for ${item.name}`);
+    }
+    const warehousePrice = getWarehousePrice(item.product_id, selectedWarehouse);
+    return {
+        product_id: item.product_id,
+        name: item.name, // إضافة اسم المنتج هنا
+        quantity: item.quantity,
+        price: parseFloat(warehousePrice),
+        subtotal: (parseFloat(warehousePrice) * item.quantity).toFixed(2),
+        total: (parseFloat(warehousePrice) * item.quantity).toFixed(2),
+        meta_data: [
+            { key: '_warehouse', value: item.warehouse || selectedWarehouse },
+            { key: '_warehouse_price', value: parseFloat(warehousePrice).toFixed(2) },
+            { key: '_cashier_person', value: cashierName },
+            { key: '_reduced_stock', value: item.quantity.toString() }
+        ]
+    };
+});
     
     if (!lineItems.every(item => item)) {
         return;
@@ -2476,7 +2477,10 @@ color-adjust: exact !important;
         .map(fee => `*${fee.name}:* ${parseFloat(fee.total).toFixed(2)} ${currency}`)
         .join('\n');
     const total = subtotal + feeTotal - couponDiscount;
-    const products = lastOrder.line_items.map(item => `${item.name} x${item.quantity} - ${parseFloat(item.price).toFixed(2)} ${currency}`).join('\n\n');
+    const products = lastOrder.line_items.map(item => {
+    const productName = item.name || orderItems.find(orderItem => orderItem.product_id === item.product_id)?.name || 'Unknown Product';
+    return `${productName} x${item.quantity} - ${parseFloat(item.price).toFixed(2)} ${currency}`;
+}).join('\n\n');
     const formattedDate = selectedDate ? selectedDate.replace(/-/g, '/') : 'Not specified';
     const discountLines = [];
     if (couponDiscount > 0 && couponCode) {
